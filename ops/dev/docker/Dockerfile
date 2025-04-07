@@ -21,11 +21,11 @@ RUN add-apt-repository ppa:deadsnakes/ppa -y
 
 # Setup python environment
 ENV PYTHON_VERSION python3.12
+# RUN apt-get remove -y $PYTHON_VERSION-minimal
 RUN apt-get update && apt-get install -y \
     "$PYTHON_VERSION" \
     "$PYTHON_VERSION-venv" \
     "$PYTHON_VERSION-dev" \
-    "$PYTHON_VERSION-distutils" \
     python3-pip
 RUN update-alternatives --install /usr/bin/python python "/usr/bin/$PYTHON_VERSION" 1
 RUN update-alternatives --install /usr/bin/python3 python3 "/usr/bin/$PYTHON_VERSION" 1
@@ -47,6 +47,8 @@ RUN apt-get update && apt-get install -y \
 RUN apt-get install default-jre -y
 
 # dev_appserver expects `python2` to exist
+RUN sudo apt update
+RUN sudo apt install python2 -y
 RUN update-alternatives --install /usr/bin/python2 python2 /usr/bin/python2.7 1
 RUN echo 1 | update-alternatives --config python2
 

@@ -3,12 +3,14 @@ from urllib.parse import urlparse
 
 import pytest
 
-from google.appengine.api import memcache
 from google.appengine.ext import testbed
 
 from backend.common.consts.webcast_status import WebcastStatus
 from backend.common.consts.webcast_type import WebcastType
 from backend.common.helpers.webcast_online_helper import WebcastOnlineHelper
+from backend.common.memcache_models.webcast_online_status_memcache import (
+    WebcastOnlineStatusMemcache,
+)
 from backend.common.models.webcast import Webcast
 from backend.common.sitevars.google_api_secret import GoogleApiSecret
 from backend.common.sitevars.twitch_secrets import TwitchSecrets
@@ -72,9 +74,12 @@ class MockTwitchApi:
 
 
 class MockYoutubeApi:
-    def __init__(self, online=True, status="live", fail=False, throw=False) -> None:
+    def __init__(
+        self, online=True, status="live", viewers=None, fail=False, throw=False
+    ) -> None:
         self.online = online
         self.status = status
+        self.viewers = viewers
         self.fail = fail
         self.throw = throw
 
@@ -83,6 +88,13 @@ class MockYoutubeApi:
             raise Exception
         response.StatusCode = 200 if not self.fail else 500
         if self.online:
+            live_details = {
+                "actualStartTime": "2025-03-29T14:33:11Z",
+                "actualEndTime": "2025-03-29T22:04:00Z",
+                "scheduledStartTime": "2025-03-29T14:30:00Z",
+            }
+            if self.status == "live":
+                live_details["concurrentViewers"] = f"{self.viewers}"
             response.Content = json.dumps(
                 {
                     "items": [
@@ -90,7 +102,8 @@ class MockYoutubeApi:
                             "snippet": {
                                 "liveBroadcastContent": self.status,
                                 "title": "A Stream",
-                            }
+                            },
+                            "liveStreamingDetails": live_details,
                         }
                     ]
                 }
@@ -135,7 +148,7 @@ def test_add_online_status_not_in_cache() -> None:
     assert webcast.get("viewer_count") is None
 
     # Check we write the updated dict back to cache
-    cache_data = memcache.Client().get("webcast_status:html5:test_stream.m4v:None")
+    cache_data = WebcastOnlineStatusMemcache(webcast).get()
     assert webcast == cache_data
 
 
@@ -151,9 +164,8 @@ def test_add_online_status_in_cache() -> None:
         stream_title="A Stream",
         viewer_count=1337,
     )
-    memcache.Client().set(
-        "webcast_status:html5:test_stream.m4v:None", webcast_with_status
-    )
+
+    WebcastOnlineStatusMemcache(webcast).put(webcast_with_status)
 
     WebcastOnlineHelper.add_online_status([webcast])
     assert webcast == webcast_with_status
@@ -327,7 +339,7 @@ def test_add_online_status_youtube(
         urlmatchers=[
             (
                 lambda url: urlparse(url).netloc == "www.googleapis.com",
-                MockYoutubeApi(),
+                MockYoutubeApi(viewers=100),
             ),
         ]
     )
@@ -339,7 +351,7 @@ def test_add_online_status_youtube(
 
     assert webcast["status"] == WebcastStatus.ONLINE
     assert webcast["stream_title"] == "A Stream"
-    assert webcast["viewer_count"] is None
+    assert webcast["viewer_count"] == 100
 
 
 def test_add_online_status_youtube_stream_upcoming(

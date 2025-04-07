@@ -982,6 +982,18 @@ def test_event_get_short_name():
         == "NEDC - MEIR"
     )
     assert (
+        EventShortNameHelper.get_short_name(
+            "New England FIRST District Championship - Ballard Division presented by Altair",
+            event_type=EventType.DISTRICT_CMP_DIVISION,
+        )
+        == "NEDC - Ballard"
+    )
+    assert (
         EventShortNameHelper.get_short_name("FIRST Indiana State Championship")
         == "Indiana"
+    )
+    # 2024 edge cases
+    assert (
+        EventShortNameHelper.get_short_name("2024 FRC Taiwan Playoff", year=2024)
+        == "FRC Taiwan Playoff"
     )

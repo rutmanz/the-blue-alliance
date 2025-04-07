@@ -23,9 +23,10 @@ from backend.web.handlers.ajax import (
 )
 from backend.web.handlers.apidocs import blueprint as apidocs_blueprint
 from backend.web.handlers.district import district_detail, regional_detail
-from backend.web.handlers.embed import instagram_oembed
+from backend.web.handlers.embed import avatar_png, instagram_oembed
 from backend.web.handlers.error import handle_404, handle_500
 from backend.web.handlers.event import (
+    event_agenda,
     event_detail,
     event_insights,
     event_list,
@@ -77,7 +78,7 @@ configure_logging()
 
 app = Flask(__name__)
 app.wsgi_app = wrap_wsgi_app(app.wsgi_app)
-install_middleware(app)
+install_middleware(app, configure_secret_key=True)
 install_url_converters(app)
 configure_flask_cache(app)
 
@@ -95,6 +96,7 @@ app.add_url_rule("/gameday/<alias>", view_func=gameday_redirect)
 app.add_url_rule("/gameday", view_func=gameday)
 
 app.add_url_rule("/event/<event_key>", view_func=event_detail)
+app.add_url_rule("/event/<event_key>/agenda", view_func=event_agenda)
 app.add_url_rule("/event/<event_key>/feed", view_func=event_rss)
 app.add_url_rule("/event/<event_key>/insights", view_func=event_insights)
 app.add_url_rule("/events/<int:year>", view_func=event_list)
@@ -182,6 +184,7 @@ app.add_url_rule("/_/remap_teams/<event_key>", view_func=event_remap_teams_handl
 app.add_url_rule("/_/playoff_types", view_func=playoff_types_handler)
 app.add_url_rule("/_/typeahead/<search_key>", view_func=typeahead_handler)
 app.add_url_rule("/instagram_oembed/<media_key>", view_func=instagram_oembed)
+app.add_url_rule("/avatar/<int:year>/<team_key>.png", view_func=avatar_png)
 
 app.register_blueprint(apidocs_blueprint)
 app.register_blueprint(admin_blueprint)

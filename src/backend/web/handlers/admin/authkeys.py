@@ -9,6 +9,7 @@ from backend.common.sitevars.google_api_secret import GoogleApiSecret
 from backend.common.sitevars.instagram_api_secret import InstagramApiSecret
 from backend.common.sitevars.livestream_secrets import LivestreamSecrets
 from backend.common.sitevars.mobile_client_ids import MobileClientIds
+from backend.common.sitevars.nexus_api_secret import NexusApiSecrets
 from backend.common.sitevars.twitch_secrets import TwitchSecrets
 from backend.web.profiled_render import render_template
 
@@ -22,6 +23,7 @@ def authkeys_get() -> str:
     fmsapi_keys = FMSApiSecrets.get()
     clientIds = MobileClientIds.get()
     instagram_secrets = InstagramApiSecret.get()
+    nexus_secrets = NexusApiSecrets.get()
 
     template_values = {
         "apiv3_key": Apiv3Key.api_key(),
@@ -33,9 +35,11 @@ def authkeys_get() -> str:
         "android_client_id": clientIds.get("android", ""),
         "ios_client_id": clientIds.get("ios", ""),
         "gcm_key": gcm_serverKey.get("gcm_key", ""),
-        "twitch_secret": twitch_secrets.get("client_id", ""),
+        "twitch_client_id": twitch_secrets.get("client_id", ""),
+        "twitch_secret": twitch_secrets.get("client_secret", ""),
         "livestream_secret": livestream_secrets.get("api_key", ""),
         "instagram_secret": instagram_secrets.get("api_key", ""),
+        "nexus_secret": nexus_secrets.get("api_secret", ""),
     }
 
     return render_template("admin/authkeys.html", template_values)
@@ -50,10 +54,12 @@ def authkeys_post() -> Response:
     android_client_id = request.form.get("android_client_id", "")
     ios_client_id = request.form.get("ios_client_id", "")
     gcm_key = request.form.get("gcm_key", "")
-    twitch_client_id = request.form.get("twitch_secret", "")
+    twitch_client_id = request.form.get("twitch_client_id", "")
+    twitch_secret = request.form.get("twitch_secret", "")
     livestream_key = request.form.get("livestream_secret", "")
     instagram_key = request.form.get("instagram_secret", "")
     apiv3_key = request.form.get("apiv3_key", "")
+    nexus_secret = request.form.get("nexus_secret", "")
 
     GoogleApiSecret.put({"api_key": google_key})
     InstagramApiSecret.put({"api_key": instagram_key})
@@ -71,8 +77,11 @@ def authkeys_post() -> Response:
 
     twitch_secrets = TwitchSecrets.get()
     twitch_secrets["client_id"] = twitch_client_id
+    twitch_secrets["client_secret"] = twitch_secret
     TwitchSecrets.put(twitch_secrets)
 
     LivestreamSecrets.put({"api_key": livestream_key})
+
+    NexusApiSecrets.put({"api_secret": nexus_secret})
 
     return redirect(url_for("admin.authkeys_get"))

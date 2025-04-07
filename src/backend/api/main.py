@@ -16,7 +16,10 @@ from backend.api.handlers.client_api import (
     update_model_preferences,
 )
 from backend.api.handlers.district import (
+    district_advancement,
+    district_awards,
     district_events,
+    district_history,
     district_list_year,
     district_rankings,
     district_teams,
@@ -24,6 +27,7 @@ from backend.api.handlers.district import (
 from backend.api.handlers.error import handle_404
 from backend.api.handlers.event import (
     event,
+    event_advancement_points,
     event_awards,
     event_detail,
     event_list_all,
@@ -31,11 +35,21 @@ from backend.api.handlers.event import (
     event_matches,
     event_playoff_advancement,
     event_teams,
+    event_teams_media,
     event_teams_statuses,
 )
 from backend.api.handlers.helpers.profiled_jsonify import profiled_jsonify
+from backend.api.handlers.insights import (
+    insights_leaderboards_year,
+    insights_notables_year,
+)
 from backend.api.handlers.match import match, zebra_motionworks
 from backend.api.handlers.media import media_tags
+from backend.api.handlers.regional_advancement import (
+    regional_advancement,
+    regional_rankings,
+)
+from backend.api.handlers.search import search_index
 from backend.api.handlers.status import status
 from backend.api.handlers.team import (
     team,
@@ -45,6 +59,7 @@ from backend.api.handlers.team import (
     team_event_status,
     team_events,
     team_events_statuses_year,
+    team_history,
     team_history_districts,
     team_history_robots,
     team_list,
@@ -84,14 +99,14 @@ class ModelTypeConverter(BaseConverter):
 
 
 class EventDetailTypeConverter(BaseConverter):
-    regex = r"alliances|district_points|insights|oprs|coprs|predictions|rankings"
+    regex = r"alliances|district_points|insights|oprs|coprs|predictions|rankings|regional_champs_pool_points"
 
 
 configure_logging()
 
 app = Flask(__name__)
 app.wsgi_app = wrap_wsgi_app(app.wsgi_app)
-install_middleware(app)
+install_middleware(app, configure_secret_key=True)
 install_url_converters(app)
 configure_flask_cache(app)
 
@@ -106,12 +121,18 @@ CORS(
     origins="*",
     methods=["OPTIONS", "GET"],
     allow_headers=["X-TBA-Auth-Key", "If-None-Match", "If-Modified-Since"],
+    expose_headers=["ETag"],
+    max_age=24 * 60 * 60,
 )
 
 # Overall Status
 api_v3.add_url_rule("/status", view_func=status)
 
 # District
+api_v3.add_url_rule(
+    "/district/<string:district_abbreviation>/history", view_func=district_history
+)
+api_v3.add_url_rule("/district/<string:district_key>/awards", view_func=district_awards)
 api_v3.add_url_rule("/district/<string:district_key>/events", view_func=district_events)
 api_v3.add_url_rule(
     "/district/<string:district_key>/events/<model_type:model_type>",
@@ -125,6 +146,9 @@ api_v3.add_url_rule(
 api_v3.add_url_rule(
     "/district/<string:district_key>/rankings", view_func=district_rankings
 )
+api_v3.add_url_rule(
+    "/district/<string:district_key>/advancement", view_func=district_advancement
+)
 
 # District List
 api_v3.add_url_rule("/districts/<int:year>", view_func=district_list_year)
@@ -137,6 +161,10 @@ api_v3.add_url_rule(
 api_v3.add_url_rule(
     "/event/<string:event_key>/<event_detail_type:detail_type>",
     view_func=event_detail,
+)
+api_v3.add_url_rule(
+    "/event/<string:event_key>/advancement_points",
+    view_func=event_advancement_points,
 )
 api_v3.add_url_rule("/event/<string:event_key>/teams", view_func=event_teams)
 api_v3.add_url_rule(
@@ -157,6 +185,7 @@ api_v3.add_url_rule("/event/<string:event_key>/awards", view_func=event_awards)
 api_v3.add_url_rule(
     "/event/<string:event_key>/playoff_advancement", view_func=event_playoff_advancement
 )
+api_v3.add_url_rule("/event/<string:event_key>/team_media", view_func=event_teams_media)
 
 # Event List
 api_v3.add_url_rule("/events/all", view_func=event_list_all)
@@ -185,7 +214,14 @@ api_v3.add_url_rule(
     "/team/<string:team_key>/<simple_model_type:model_type>", view_func=team
 )
 
+# Regional Advancement
+api_v3.add_url_rule("/regional_advancement/<int:year>/", view_func=regional_advancement)
+api_v3.add_url_rule(
+    "/regional_advancement/<int:year>/rankings", view_func=regional_rankings
+)
+
 # Team History
+api_v3.add_url_rule("/team/<string:team_key>/history", view_func=team_history)
 api_v3.add_url_rule(
     "/team/<string:team_key>/years_participated", view_func=team_years_participated
 )
@@ -266,6 +302,15 @@ api_v3.add_url_rule(
     view_func=team_list,
 )
 
+# Insights
+api_v3.add_url_rule(
+    "/insights/leaderboards/<int:year>", view_func=insights_leaderboards_year
+)
+api_v3.add_url_rule("/insights/notables/<int:year>", view_func=insights_notables_year)
+
+# Search
+api_v3.add_url_rule("/search_index", view_func=search_index)
+
 # Trusted API
 trusted_api = Blueprint("trusted_api", __name__, url_prefix="/api/trusted/v1")
 CORS(
@@ -278,17 +323,17 @@ trusted_api.add_url_rule(
     "/event/<string:event_key>/alliance_selections/update",
     methods=["POST"],
     view_func=update_event_alliances,
-),
+)
 trusted_api.add_url_rule(
     "/event/<string:event_key>/awards/update",
     methods=["POST"],
     view_func=update_event_awards,
-),
+)
 trusted_api.add_url_rule(
     "/event/<string:event_key>/info/update",
     methods=["POST"],
     view_func=update_event_info,
-),
+)
 trusted_api.add_url_rule(
     "/event/<string:event_key>/matches/update",
     methods=["POST"],

@@ -146,7 +146,10 @@ class FMSAPIEventListParser(ParserJSON[Tuple[List[Event], List[District]]]):
 
             name = event["name"]
             short_name = EventShortNameHelper.get_short_name(
-                name, district_code=event["districtCode"], event_type=event_type
+                name,
+                district_code=event["districtCode"],
+                event_type=event_type,
+                year=self.season,
             )
             district_key = (
                 District.render_key_name(self.season, event["districtCode"].lower())
@@ -219,9 +222,9 @@ class FMSAPIEventListParser(ParserJSON[Tuple[List[Event], List[District]]]):
                     country=country,
                     venue_address=address,
                     year=self.season,
-                    district_key=ndb.Key(District, district_key)
-                    if district_key
-                    else None,
+                    district_key=(
+                        ndb.Key(District, district_key) if district_key else None
+                    ),
                     website=website,
                     webcast_json=json.dumps(webcasts) if webcasts else None,
                 )

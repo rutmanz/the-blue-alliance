@@ -38,7 +38,7 @@ class WebhookRequest(Request):
         """Attempt to send the notification."""
         # Build the request
         headers = {
-            "Content-Type": 'application/json; charset=utf-8',
+            "Content-Type": "application/json; charset=utf-8",
             "X-TBA-Version": "{}".format(WEBHOOK_VERSION),
         }
         payload = self._json_string()
@@ -58,6 +58,7 @@ class WebhookRequest(Request):
             elif response.status_code == 404:
                 valid_url = False
         except Exception:
+            # logging.error(f"Failed to send webhook request: {e}")
             pass
 
         return valid_url

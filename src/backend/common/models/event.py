@@ -10,7 +10,7 @@ from google.appengine.ext import ndb
 from pyre_extensions import none_throws
 
 from backend.common.consts import event_type
-from backend.common.consts.event_type import EventType
+from backend.common.consts.event_type import EventType, SEASON_EVENT_TYPES
 from backend.common.consts.playoff_type import PlayoffType
 from backend.common.futures import TypedFuture
 from backend.common.models.alliance import EventAlliance
@@ -53,6 +53,8 @@ class Event(CachedModel):
         "roe": "roebling",
         "tes": "tesla",
         "tur": "turing",
+        "joh": "johnson",
+        "mil": "milstein",
     }
 
     EVENT_SHORT_EXCEPTIONS_2023 = {
@@ -106,9 +108,9 @@ class Event(CachedModel):
     )  # such as 'America/Los_Angeles' or 'Asia/Jerusalem'
     official: bool = ndb.BooleanProperty(default=False)  # Is the event FIRST-official?
     first_eid = ndb.StringProperty()  # from USFIRST
-    parent_event: Optional[
-        ndb.Key
-    ] = ndb.KeyProperty()  # This is the division -> event champs relationship
+    parent_event: Optional[ndb.Key] = (
+        ndb.KeyProperty()
+    )  # This is the division -> event champs relationship
     # event champs -> all divisions
     divisions: List[ndb.Key] = ndb.KeyProperty(repeated=True)  # pyre-ignore[8]
     facebook_eid = ndb.TextProperty(indexed=False)  # from Facebook
@@ -118,9 +120,7 @@ class Event(CachedModel):
         indexed=False
     )  # list of dicts, valid keys include 'type' and 'channel'
     enable_predictions = ndb.BooleanProperty(default=False)
-    remap_teams: Dict[
-        str, str
-    ] = (
+    remap_teams: Dict[str, str] = (
         ndb.JsonProperty()
     )  # Map of temporary team numbers to pre-rookie and B teams. key is the old team key, value is the new team key
 
@@ -237,6 +237,13 @@ class Event(CachedModel):
             return None
         else:
             return self.details.district_points
+
+    @property
+    def regional_champs_pool_points(self) -> Optional[EventDistrictPoints]:
+        if self.event_type_enum != EventType.REGIONAL or self.details is None:
+            return None
+
+        return self.details.regional_champs_pool_points
 
     @property
     def playoff_advancement(self) -> Optional[TPlayoffAdvancement]:
@@ -425,11 +432,11 @@ class Event(CachedModel):
             # Group 2021 Events by their type - depends on both
             if week == 0:
                 return "Participation"
-            elif week == 2:
+            elif week == 6:
                 return "FIRST Innovation Challenge"
-            elif week == 3:
+            elif week == 7:
                 return "INFINITE RECHARGE At Home Challenge"
-            elif week == 4:
+            elif week == 8:
                 return "Game Design Challenge"
             else:
                 return "Awards"
@@ -560,6 +567,19 @@ class Event(CachedModel):
                 )
         else:
             self._venue_address_safe = self.venue_address.replace("\r\n", "\n")
+            if self.venue is not None and self.venue not in self._venue_address_safe:
+                self._venue_address_safe = "{}\n{}".format(
+                    none_throws(self.venue),
+                    self._venue_address_safe,
+                )
+            if (
+                self.location is not None
+                and self.location not in self._venue_address_safe
+            ):
+                self._venue_address_safe = "{}\n{}".format(
+                    self._venue_address_safe,
+                    none_throws(self.location),
+                )
         return self._venue_address_safe
 
     @property
@@ -574,12 +594,14 @@ class Event(CachedModel):
                 # Sort firstinspires channels to the front, keep the order of the rest
                 self._webcast = sorted(
                     self._webcast or [],
-                    key=lambda w: 0
-                    if (
-                        w["type"] == "twitch"
-                        and w["channel"].startswith("firstinspires")
-                    )
-                    else 1,
+                    key=lambda w: (
+                        0
+                        if (
+                            w["type"] == "twitch"
+                            and w["channel"].startswith("firstinspires")
+                        )
+                        else 1
+                    ),
                 )
             except Exception:
                 self._webcast = None
@@ -677,6 +699,13 @@ class Event(CachedModel):
             return "/gameday/{}".format(self.key_name)
         else:
             return None
+
+    @property
+    def public_agenda_url(self) -> Optional[str]:
+        if self.event_type_enum not in SEASON_EVENT_TYPES:
+            return None
+
+        return f"http://firstinspires.org/sites/default/files/uploads/frc/{self.year}-events/{self.year}_{self.event_short.upper()}_Agenda.pdf"
 
     @property
     def hashtag(self) -> str:

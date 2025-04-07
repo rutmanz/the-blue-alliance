@@ -31,12 +31,13 @@ class EventDetails(CachedModel):
     key_name is the event key, like '2010ct'
     """
 
-    alliance_selections: List[
-        EventAlliance
-    ] = (
+    alliance_selections: List[EventAlliance] = (
         ndb.JsonProperty()
     )  # Formatted as: [{'picks': [captain, pick1, pick2, 'frc123', ...], 'declines':[decline1, decline2, ...] }, {'picks': [], 'declines': []}, ... ]
     district_points: EventDistrictPoints = cast(EventDistrictPoints, ndb.JsonProperty())
+    regional_champs_pool_points: EventDistrictPoints = cast(
+        EventDistrictPoints, ndb.JsonProperty()
+    )
     matchstats: EventMatchstats = cast(
         EventMatchstats, ndb.JsonProperty()
     )  # for OPR, DPR, CCWM, etc.
@@ -63,6 +64,7 @@ class EventDetails(CachedModel):
         "rankings",
         "rankings2",
         "playoff_advancement",
+        "regional_champs_pool_points",
     }
 
     def __init__(self, *args, **kw):
@@ -114,7 +116,8 @@ class EventDetails(CachedModel):
                 if game_year == 2021:
                     # 2021 did not have matches played for rankings
                     continue
-
+                elif not rank["sort_orders"]:
+                    continue
                 elif game_year >= 2017:
                     rank["extra_stats"] = [
                         int(round(rank["sort_orders"][0] * rank["matches_played"])),
@@ -122,9 +125,11 @@ class EventDetails(CachedModel):
                     has_extra_stats = True
                 elif rank["qual_average"] is None:
                     rank["extra_stats"] = [
-                        rank["sort_orders"][0] / rank["matches_played"]
-                        if rank["matches_played"] > 0
-                        else 0,
+                        (
+                            rank["sort_orders"][0] / rank["matches_played"]
+                            if rank["matches_played"] > 0
+                            else 0
+                        ),
                     ]
                     has_extra_stats = True
 
@@ -174,10 +179,11 @@ class EventDetails(CachedModel):
             row = [rank["rank"], rank["team_key"][3:]]
             # for i, item in enumerate(rank['sort_orders']):
             for i, precision in enumerate(precisions):
-                # row.append('%.*f' % (precisions[i], round(item, precisions[i])))
-                row.append(
-                    "%.*f" % (precision, round(rank["sort_orders"][i], precision))
-                )
+                if i < len(rank["sort_orders"]):
+                    # row.append('%.*f' % (precisions[i], round(item, precisions[i])))
+                    row.append(
+                        "%.*f" % (precision, round(rank["sort_orders"][i], precision))
+                    )
             if rank["record"]:
                 record = none_throws(rank["record"])
                 row.append(f"{record['wins']}-{record['losses']}-{record['ties']}")

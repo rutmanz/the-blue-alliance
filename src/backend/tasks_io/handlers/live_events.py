@@ -8,6 +8,7 @@ from flask.helpers import make_response
 from google.appengine.api import taskqueue
 from werkzeug.wrappers import Response
 
+from backend.common.consts.nexus_match_status import NexusMatchStatus
 from backend.common.helpers.event_helper import EventHelper
 from backend.common.helpers.event_team_status_helper import EventTeamStatusHelper
 from backend.common.helpers.firebase_pusher import FirebasePusher
@@ -17,10 +18,14 @@ from backend.common.helpers.match_time_prediction_helper import (
 )
 from backend.common.helpers.playoff_advancement_helper import PlayoffAdvancementHelper
 from backend.common.helpers.season_helper import SeasonHelper
+from backend.common.helpers.webcast_online_helper import WebcastOnlineHelper
 from backend.common.manipulators.event_details_manipulator import (
     EventDetailsManipulator,
 )
 from backend.common.manipulators.event_team_manipulator import EventTeamManipulator
+from backend.common.memcache_models.event_nexus_queue_status_memcache import (
+    EventNexusQueueStatusMemcache,
+)
 from backend.common.models.event import Event
 from backend.common.models.event_details import EventDetails
 from backend.common.models.event_playoff_advancement import EventPlayoffAdvancement
@@ -246,8 +251,25 @@ def update_match_time_predictions(event_key: EventKey) -> str:
     timezone: datetime.tzinfo = pytz.timezone(event.timezone_id)
     played_matches = MatchHelper.recent_matches(matches, num=0)
     unplayed_matches = MatchHelper.upcoming_matches(matches, num=len(matches))
+    nexus_queue_info = EventNexusQueueStatusMemcache(event_key).get()
+    if (
+        nexus_queue_info
+        and played_matches
+        and (most_recent_match := played_matches[-1])
+        and (nexus_match := nexus_queue_info["matches"].get(most_recent_match.key_name))
+        and nexus_match["status"] != NexusMatchStatus.ON_FIELD
+    ):
+        # If the most recent match isnt' set to "on field", then we assume
+        # the data is stale, or there is an issue, so do not use the data
+        nexus_queue_info = None
+
     MatchTimePredictionHelper.predict_future_matches(
-        event_key, played_matches, unplayed_matches, timezone, event.within_a_day
+        event_key,
+        played_matches,
+        unplayed_matches,
+        timezone,
+        event.within_a_day,
+        nexus_queue_info,
     )
 
     # Detect whether the event is down
@@ -280,4 +302,43 @@ def update_match_time_predictions(event_key: EventKey) -> str:
 
     # Clear API Response cache
     # ApiStatusController.clear_cache_if_needed(old_status, new_status)
+    if (
+        "X-Appengine-Taskname" not in request.headers
+    ):  # Only write out if not in taskqueue
+        return f"Predicted match times for {len(unplayed_matches)} matches\n{[m.key_name + " " + m.predicted_time.isoformat() for m in unplayed_matches if m.predicted_time is not None]}"
+
     return ""
+
+
+@blueprint.route("/tasks/do/update_webcast_online_status/<event_key>")
+def update_event_webcast_status(event_key: EventKey) -> Response:
+    event = Event.get_by_id(event_key)
+    if not event:
+        abort(404)
+
+    WebcastOnlineHelper.add_online_status(event.webcast)
+    return make_response(f"Updated event webcasts: {event.webcast}")
+
+
+@blueprint.route("/tasks/do/update_firebase_event/<event_key>")
+def update_firebase_event(event_key: EventKey) -> Response:
+    event = Event.get_by_id(event_key)
+    if not event:
+        abort(404)
+
+    FirebasePusher.update_live_event(event)
+    return make_response("")
+
+
+@blueprint.route("/tasks/do/update_firebase_matches/<event_key>")
+def update_firebase_matches(event_key: EventKey) -> Response:
+    event = Event.get_by_id(event_key)
+    if not event:
+        abort(404)
+
+    event.prep_matches()
+
+    for match in event.matches:
+        FirebasePusher.update_match(match, updated_attrs=set())
+
+    return make_response("")

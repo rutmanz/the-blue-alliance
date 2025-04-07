@@ -3,21 +3,26 @@ from typing import cast, Dict, List, Optional, Tuple
 
 from google.appengine.ext import ndb
 
-from backend.common.consts import comp_level, event_type
+from backend.common.consts import event_type
 from backend.common.consts.award_type import AwardType
+from backend.common.consts.comp_level import COMP_LEVELS
 from backend.common.consts.event_type import EventType
 from backend.common.consts.media_tag import MediaTag
+from backend.common.helpers.alliance_helper import AllianceHelper
 from backend.common.helpers.award_helper import AwardHelper
 from backend.common.helpers.event_helper import EventHelper
+from backend.common.helpers.event_team_status_helper import EventTeamStatusHelper
 from backend.common.helpers.match_helper import MatchHelper
 from backend.common.helpers.media_helper import MediaHelper
 from backend.common.helpers.playlist_helper import PlaylistHelper
 from backend.common.helpers.season_helper import SeasonHelper
 from backend.common.models.award import Award
 from backend.common.models.event import Event
+from backend.common.models.event_team import EventTeam
 from backend.common.models.event_team_status import WLTRecord
 from backend.common.models.keys import Year
 from backend.common.models.match import Match
+from backend.common.models.regional_champs_pool import RegionalChampsPool
 from backend.common.models.robot import Robot
 from backend.common.models.team import Team
 from backend.common.queries import (
@@ -62,6 +67,15 @@ class TeamRenderer:
         participation_future = team_query.TeamParticipationQuery(
             team_key=team.key_name
         ).fetch_async()
+        eventteams_future = event_query.TeamYearEventTeamsQuery(
+            team_key=team.key_name, year=year
+        ).fetch_async()
+        if SeasonHelper.is_valid_regional_pool_year(year):
+            regional_champs_pool_future = RegionalChampsPool.get_by_id_async(
+                RegionalChampsPool.render_key_name(year)
+            )
+        else:
+            regional_champs_pool_future = None
 
         hof_awards = hof_award_future.get_result()
         hof_video = hof_video_future.get_result()
@@ -73,9 +87,11 @@ class TeamRenderer:
             "years": [award.year for award in hof_awards],
             "media": {
                 "video": hof_video[0].youtube_url_link if len(hof_video) > 0 else None,
-                "presentation": hof_presentation[0].youtube_url_link
-                if len(hof_presentation) > 0
-                else None,
+                "presentation": (
+                    hof_presentation[0].youtube_url_link
+                    if len(hof_presentation) > 0
+                    else None
+                ),
                 "essay": hof_essay[0].external_link if len(hof_essay) > 0 else None,
             },
         }
@@ -89,6 +105,7 @@ class TeamRenderer:
         if not events_sorted:
             return None, False
 
+        has_valid_district = False
         district_name = None
         district_abbrev = None
         team_district_points = None
@@ -97,6 +114,7 @@ class TeamRenderer:
         for district in team_districts:
             # Do not show District Points information for 2021 pages
             if district and district.year == year and district.year != 2021:
+                has_valid_district = True
                 district_abbrev = district.abbreviation
                 district_name = district.display_name
                 if district.rankings:
@@ -111,6 +129,24 @@ class TeamRenderer:
                     )
                 break
 
+        team_regional_champs_pool_points = None
+        if (
+            not has_valid_district
+            and regional_champs_pool_future
+            and (regional_champs_pool := regional_champs_pool_future.get_result())
+            and (regional_rankings := regional_champs_pool.rankings)
+        ):
+            team_regional_champs_pool_points = next(
+                iter(
+                    filter(
+                        lambda r: r["team_key"] == team.key_name,
+                        regional_rankings,
+                    )
+                ),
+                None,
+            )
+
+        event_teams = eventteams_future.get_result()
         participation = []
         season_wlt_list = []
         offseason_wlt_list = []
@@ -165,7 +201,7 @@ class TeamRenderer:
             playlist = PlaylistHelper.generate_playlist_link(
                 matches_organized=matches_organized,
                 title="{} (Team {})".format(event.name, team.team_number),
-                allow_levels=comp_level.COMP_LEVELS,
+                allow_levels=COMP_LEVELS,
             )
 
             district_points = None
@@ -180,8 +216,54 @@ class TeamRenderer:
                     None,
                 )
 
+            regional_champs_points = None
+            if team_regional_champs_pool_points:
+                regional_champs_points = next(
+                    iter(
+                        filter(
+                            lambda e: e["event_key"] == event.key_name,
+                            team_regional_champs_pool_points["event_points"],
+                        )
+                    ),
+                    None,
+                )
+
+            alliance, alliance_pick, alliance_size = (
+                AllianceHelper.get_alliance_details_and_pick_name(event, team.key_name)
+            )
+
+            if alliance and "name" in alliance:
+                alliance_status = EventTeamStatusHelper._build_playoff_info(
+                    team.key_name,
+                    event.details,
+                    MatchHelper.organized_matches(event.matches)[1],
+                    event.year,
+                    event.playoff_type,
+                )
+                if alliance_status:
+                    alliance_status = " and ".join(
+                        AllianceHelper.generate_playoff_status_string(
+                            alliance_status,
+                            alliance_pick,
+                            alliance["name"],
+                            plural=True,
+                            include_record=False,
+                        )
+                    )
+                else:
+                    alliance_status = None
+            else:
+                alliance_status = None
+
+            eventteam = next(
+                filter(lambda et: et.event == event.key, event_teams), None
+            )
+
             participation.append(
                 {
+                    "alliance": alliance,
+                    "alliance_status": alliance_status,
+                    "alliance_size": alliance_size,
                     "event": event,
                     "matches": matches_organized,
                     "match_count": match_count,
@@ -192,6 +274,12 @@ class TeamRenderer:
                     "awards": event_awards,
                     "playlist": playlist,
                     "district_points": district_points,
+                    "regional_champs_points": regional_champs_points,
+                    "nexus_pit_location": (
+                        eventteam.pit_location["location"]
+                        if eventteam and eventteam.pit_location
+                        else None
+                    ),
                 }
             )
 
@@ -272,6 +360,14 @@ class TeamRenderer:
             "year_qual_avg": year_qual_avg,
             "year_elim_avg": year_elim_avg,
             "current_event": current_event,
+            "current_event_pit_location": next(
+                (
+                    comp["nexus_pit_location"]
+                    for comp in participation
+                    if comp["event"].now
+                ),
+                None,
+            ),
             "matches_upcoming": matches_upcoming,
             "medias_by_slugname": medias_by_slugname,
             "avatar": avatar,
@@ -286,6 +382,13 @@ class TeamRenderer:
             "max_year": SeasonHelper.get_max_year(),
             "hof": hall_of_fame,
             "team_district_points": team_district_points,
+            "team_regional_champs_pool_points": team_regional_champs_pool_points,
+            "has_any_pit_location": any(
+                comp["event"].official
+                and (comp["event"].now or comp["event"].future)
+                and comp["nexus_pit_location"] is not None
+                for comp in participation
+            ),
         }
 
         return template_values, short_cache
@@ -329,9 +432,11 @@ class TeamRenderer:
             "years": [award.year for award in hof_awards],
             "media": {
                 "video": hof_video[0].youtube_url_link if len(hof_video) > 0 else None,
-                "presentation": hof_presentation[0].youtube_url_link
-                if len(hof_presentation) > 0
-                else None,
+                "presentation": (
+                    hof_presentation[0].youtube_url_link
+                    if len(hof_presentation) > 0
+                    else None
+                ),
                 "essay": hof_essay[0].external_link if len(hof_essay) > 0 else None,
             },
         }
@@ -345,6 +450,7 @@ class TeamRenderer:
 
         event_awards = []
         current_event = None
+        current_event_pit = None
         matches_upcoming = None
         short_cache = False
         years = set()
@@ -352,10 +458,20 @@ class TeamRenderer:
             years.add(event.year)
             if event.now:
                 current_event = event
-                matches = match_query.TeamEventMatchesQuery(
+
+                matches_future = match_query.TeamEventMatchesQuery(
                     team.key_name, event.key_name
-                ).fetch()
-                matches_upcoming = MatchHelper.upcoming_matches(matches)
+                ).fetch_async()
+                eventteam_future = EventTeam.get_by_id_async(
+                    f"{event.key_name}_{team.key_name}"
+                )
+
+                matches_upcoming = MatchHelper.upcoming_matches(
+                    matches_future.get_result()
+                )
+                event_team = eventteam_future.get_result()
+                if event_team and (loc := event_team.pit_location):
+                    current_event_pit = loc["location"]
 
             if event.within_a_day:
                 short_cache = True
@@ -369,9 +485,11 @@ class TeamRenderer:
             event_awards.append((event, sorted_awards))
         event_awards = sorted(
             event_awards,
-            key=lambda e_a: e_a[0].start_date
-            if e_a[0].start_date
-            else datetime.datetime(e_a[0].year, 12, 31),
+            key=lambda e_a: (
+                e_a[0].start_date
+                if e_a[0].start_date
+                else datetime.datetime(e_a[0].year, 12, 31)
+            ),
         )
 
         last_competed = None
@@ -391,6 +509,7 @@ class TeamRenderer:
             "years": sorted(years),
             "social_medias": social_medias,
             "current_event": current_event,
+            "current_event_pit_location": current_event_pit,
             "matches_upcoming": matches_upcoming,
             "last_competed": last_competed,
             "current_year": current_year,
@@ -431,9 +550,9 @@ class TeamRenderer:
 
         events_sorted = sorted(
             events_future.get_result(),
-            key=lambda e: e.start_date
-            if e.start_date
-            else datetime.datetime(year, 12, 31),
+            key=lambda e: (
+                e.start_date if e.start_date else datetime.datetime(year, 12, 31)
+            ),
         )  # unknown goes last
 
         matches_by_event_key: Dict[ndb.Key, List[Match]] = {}

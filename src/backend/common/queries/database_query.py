@@ -4,6 +4,7 @@ import abc
 import logging
 from typing import Any, Dict, Generator, Generic, List, Optional, Set, Type, Union
 
+from google.appengine.api.datastore_errors import BadRequestError
 from google.appengine.ext import ndb
 from pyre_extensions import none_throws
 
@@ -23,8 +24,7 @@ class DatabaseQuery(abc.ABC, Generic[QueryReturn, DictQueryReturn]):
         self._query_args = kwargs
 
     @abc.abstractmethod
-    def _query_async(self) -> TypedFuture[QueryReturn]:
-        ...
+    def _query_async(self) -> TypedFuture[QueryReturn]: ...
 
     @ndb.tasklet
     def _do_query(self, *args, **kwargs) -> Generator[Any, Any, QueryReturn]:
@@ -130,9 +130,13 @@ class CachedDatabaseQuery(
             if cached_query_result is None:
                 query_result = yield self._query_async(*args, **kwargs)
                 if self.CACHE_WRITES_ENABLED:
-                    yield CachedQueryResult(
-                        id=cache_key, result=query_result
-                    ).put_async()
+                    try:
+                        yield CachedQueryResult(
+                            id=cache_key, result=query_result
+                        ).put_async()
+                    except BadRequestError as e:
+                        logging.warning("CachedQueryResult.put_async() failed!")
+                        logging.exception(e)
                 return query_result
             return cached_query_result.result
 
@@ -144,7 +148,7 @@ class CachedDatabaseQuery(
             result = yield self._query_async(*args, **kwargs)
             return result
 
-        with Span("{}._do_query".format(self.__class__.__name__)):
+        with Span("{}._do_dict_query".format(self.__class__.__name__)):
             cache_key = self.dict_cache_key(_dict_version)
             cached_query_result = yield CachedQueryResult.get_by_id_async(cache_key)
             if cached_query_result is None:
@@ -156,8 +160,12 @@ class CachedDatabaseQuery(
                 ).convert(_dict_version)
 
                 if self.CACHE_WRITES_ENABLED:
-                    yield CachedQueryResult(
-                        id=cache_key, result_dict=converted_result
-                    ).put_async()
+                    try:
+                        yield CachedQueryResult(
+                            id=cache_key, result_dict=converted_result
+                        ).put_async()
+                    except BadRequestError as e:
+                        logging.warning("CachedQueryResult.put_async() failed!")
+                        logging.exception(e)
                 return converted_result
             return cached_query_result.result_dict

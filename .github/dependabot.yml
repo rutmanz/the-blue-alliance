@@ -22,6 +22,29 @@ updates:
   - dependency-name: "@babel/preset-env"
     versions:
     - 7.13.0
+- package-ecosystem: npm
+  directory: "/pwa"
+  schedule:
+    interval: daily
+  open-pull-requests-limit: 10
+  labels:
+    - PWA
+  groups:
+    react-router:
+      patterns:
+        - "@react-router/*"
+        - "react-router"
+    embla-carousel:
+      patterns:
+        - "embla-carousel-autoplay"
+        - "embla-carousel-react"
+    radix-ui:
+      patterns:
+        - "@radix-ui/*"
+    vitest:
+      patterns:
+        - "vitest"
+        - "@vitest/coverage-v8"
 - package-ecosystem: github-actions
   directory: "/"
   schedule:
